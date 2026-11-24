@@ -39,6 +39,94 @@ def test_normalize_objects_and_ms():
     assert normalize_words(items, ms=True) == [{"w": "yo", "s": 1.0, "e": 1.5}]
 
 
+@pytest.mark.parametrize("ms", [False, True])
+def test_normalize_assemblyai_auto_detect(ms):
+    # Shortened sample from AssemblyAI's Get a transcript API reference:
+    # https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get
+    data = {
+        "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+        "status": "completed",
+        "audio_url": "https://assembly.ai/wildfires.mp3",
+        "words": [
+            {
+                "text": "Smoke",
+                "start": 250,
+                "end": 650,
+                "confidence": 0.97465,
+                "speaker": None,
+            },
+            {
+                "text": "from",
+                "start": 730,
+                "end": 1022,
+                "confidence": 0.99999,
+                "speaker": None,
+            },
+        ],
+    }
+
+    words = normalize_words(data, ms=ms)
+
+    assert [w["w"] for w in words] == ["Smoke", "from"]
+    assert [w["s"] for w in words] == pytest.approx([0.25, 0.73])
+    assert [w["e"] for w in words] == pytest.approx([0.65, 1.022])
+
+
+@pytest.mark.parametrize("ms", [False, True])
+def test_normalize_whisper_cpp(ms):
+    # Shortened real output from:
+    # https://github.com/ggml-org/whisper.cpp/discussions/3698
+    data = {
+        "transcription": [
+            {
+                "text": " And so",
+                "tokens": [
+                    {
+                        "text": "[_BEG_]",
+                        "id": 50363,
+                        "offsets": {"from": 0, "to": 0},
+                    },
+                    {
+                        "text": " And",
+                        "id": 843,
+                        "offsets": {"from": 320, "to": 370},
+                    },
+                    {
+                        "text": " so",
+                        "id": 523,
+                        "offsets": {"from": 370, "to": 530},
+                    },
+                ],
+            },
+        ],
+    }
+
+    words = normalize_words(data, ms=ms)
+
+    assert [w["w"] for w in words] == ["And", "so"]
+    assert [w["s"] for w in words] == pytest.approx([0.32, 0.37])
+    assert [w["e"] for w in words] == pytest.approx([0.37, 0.53])
+
+
+def test_normalize_whisper_cpp_joins_word_pieces():
+    data = {
+        "transcription": [{
+            "tokens": [
+                {"text": " hel", "offsets": {"from": 100, "to": 200}},
+                {"text": "lo", "offsets": {"from": 200, "to": 300}},
+                {"text": "!", "offsets": {"from": 300, "to": 350}},
+                {"text": " world", "offsets": {"from": 400, "to": 600}},
+            ],
+        }],
+    }
+
+    words = normalize_words(data)
+
+    assert [w["w"] for w in words] == ["hello!", "world"]
+    assert [w["s"] for w in words] == pytest.approx([0.1, 0.4])
+    assert [w["e"] for w in words] == pytest.approx([0.35, 0.6])
+
+
 def test_normalize_rejects_missing_times():
     with pytest.raises(ValueError):
         normalize_words([{"word": "x"}])

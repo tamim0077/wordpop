@@ -9,7 +9,12 @@ Understood inputs:
   - a full response dict: {"words": [...]}, {"segments": [{"words": [...]}]},
     or Deepgram's {"results": {"channels": [{"alternatives": [{"words": [...]}]}]}}
 
-* AssemblyAI gives milliseconds: pass `ms=True`.
+* Full AssemblyAI responses with audio_url, status and words are detected
+  automatically. For bare word lists in milliseconds, pass `ms=True`.
+
+whisper.cpp full JSON (-ojf) is also supported. Token offsets are converted
+from milliseconds to seconds, special tokens are skipped, and word pieces
+are joined using leading whitespace as word boundaries.
 """
 from __future__ import annotations
 
@@ -39,6 +44,40 @@ def _unwrap(data: Any) -> Iterable[Any]:
                 return data["results"]["channels"][0]["alternatives"][0]["words"]
             except (KeyError, IndexError, TypeError):
                 raise ValueError("Deepgram response has no words") from None
+        if isinstance(data.get("transcription"), list):
+            tokens = []
+            for segment in data["transcription"]:
+                if not isinstance(segment.get("tokens"), list):
+                    raise ValueError("whisper.cpp response needs full JSON tokens")
+
+                segment_words = []
+                for token in segment["tokens"]:
+                    text = token.get("text", "")
+                    if text.startswith("[_") and text.endswith("_]"):
+                        continue
+                    if not text.strip():
+                        continue
+
+                    offsets = token.get("offsets") or {}
+                    start = offsets.get("from")
+                    end = offsets.get("to")
+                    if start is None or end is None:
+                        raise ValueError(f"token needs start and end offsets: {token!r}")
+
+                    if segment_words and not text[0].isspace():
+                        segment_words[-1]["text"] += text
+                        segment_words[-1]["end"] = max(
+                            float(segment_words[-1]["end"]), float(end)
+                        )
+                    else:
+                        segment_words.append({
+                            "text": text,
+                            "start": start,
+                            "end": end,
+                        })
+
+                tokens.extend(segment_words)
+            return tokens
         if isinstance(data.get("words"), list):
             return data["words"]
         if isinstance(data.get("segments"), list):
@@ -54,7 +93,17 @@ def _unwrap(data: Any) -> Iterable[Any]:
 
 def normalize_words(data: Any, ms: bool = False) -> list[Word]:
     """Return [{"w", "s", "e"}] sorted by start time. Empty words are dropped."""
-    scale = 0.001 if ms else 1.0
+    is_assemblyai = (
+        isinstance(data, dict)
+        and isinstance(data.get("words"), list)
+        and "audio_url" in data
+        and "status" in data
+    )
+    is_whisper_cpp = (
+        isinstance(data, dict)
+        and isinstance(data.get("transcription"), list)
+    )
+    scale = 0.001 if ms or is_assemblyai or is_whisper_cpp else 1.0
     words: list[Word] = []
     for item in _unwrap(data):
         text, start, end = _get(item, _TEXT_KEYS), _get(item, _START_KEYS), _get(item, _END_KEYS)
