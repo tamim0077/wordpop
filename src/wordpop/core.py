@@ -1,6 +1,7 @@
 """Build an ASS subtitle file with word-by-word highlighted captions."""
 from __future__ import annotations
 
+from html import escape
 from typing import Optional, Union
 
 from .styles import BLACK, WHITE, Style, colour, get_style
@@ -45,6 +46,52 @@ def group_words(words: list[Word], max_words: int, max_span: float, max_gap: flo
         group.append(w)
     if group:
         yield group
+
+
+def _timed_groups(words, duration, st):
+    words = [w for w in words if w["e"] > 0 and w["s"] < duration]
+    groups = list(group_words(words, max_words=st.max_words, max_span=st.max_span))
+
+    for gi, group in enumerate(groups):
+        nxt = groups[gi + 1][0]["s"] if gi + 1 < len(groups) else duration
+        group_end = min(nxt, group[-1]["e"] + 0.35, duration)
+        yield group, group_end
+
+
+def _subtitle_stamp(ms, separator):
+    hours, ms = divmod(ms, 3_600_000)
+    minutes, ms = divmod(ms, 60_000)
+    seconds, ms = divmod(ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}{separator}{ms:03d}"
+
+
+def _plain_captions(words, duration, style, vtt):
+    if duration is None:
+        duration = max((w["e"] for w in words), default=0) + 0.35
+    blocks = []
+    separator = "." if vtt else ","
+    for group, end in _timed_groups(words, duration, get_style(style)):
+        start_ms = round(max(0, group[0]["s"]) * 1000)
+        end_ms = round(end * 1000)
+        if end_ms <= start_ms:
+            continue
+        timing = f"{_subtitle_stamp(start_ms, separator)} --> {_subtitle_stamp(end_ms, separator)}"
+        text = " ".join(" ".join(w["w"].split()) for w in group)
+        cue = [timing, escape(text, quote=False)]
+        if not vtt:
+            cue.insert(0, str(len(blocks) + 1))
+        blocks.append("\n".join(cue))
+    return ("WEBVTT\n\n" if vtt else "") + "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def build_srt(words: list[Word], duration=None, *, style="pop") -> str:
+    """Return one numbered SRT cue per caption group."""
+    return _plain_captions(words, duration, style, vtt=False)
+
+
+def build_vtt(words: list[Word], duration=None, *, style="pop") -> str:
+    """Return one WebVTT cue per caption group."""
+    return _plain_captions(words, duration, style, vtt=True)
 
 
 def _header(st: Style, font: str, hook_font: str, align: int, margin_v: int) -> str:
@@ -129,13 +176,8 @@ def build_ass(
     align, mv = PLACEMENT[layout]
     if margin_v is not None:
         mv = margin_v
-    words = [w for w in words if w["e"] > 0 and w["s"] < duration]
-    groups = list(group_words(words, max_words=st.max_words, max_span=st.max_span))
     lines: list[str] = []
-
-    for gi, group in enumerate(groups):
-        nxt = groups[gi + 1][0]["s"] if gi + 1 < len(groups) else duration
-        group_end = min(nxt, group[-1]["e"] + 0.35, duration)
+    for group, group_end in _timed_groups(words, duration, st):
         if st.plate:
             text = " ".join(_clean(w["w"]) for w in group)
             lines.append(f"Dialogue: 0,{_ts(group[0]['s'])},{_ts(group_end)},Cap,,0,0,0,,{text}")

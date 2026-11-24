@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from wordpop import STYLES, Style, build_ass, clip_words, colour, normalize_words
+from wordpop import STYLES, Style, build_ass, build_srt, build_vtt, clip_words, colour, normalize_words
 from wordpop.cli import main
 
 WORDS = [
@@ -119,3 +119,32 @@ def test_cli_writes_file(tmp_path):
     assert main([str(src), "-o", str(out), "--style", "beast", "--start", "1", "--end", "3"]) == 0
     text = out.read_text(encoding="utf-8")
     assert "Luckiest Guy" in text and "Dialogue:" in text
+
+
+@pytest.mark.parametrize("builder,sep", [(build_srt, ","), (build_vtt, ".")])
+def test_plain_captions(builder, sep):
+    words = normalize_words([{"w": "café", "s": 59.9996, "e": 60.1},
+                             {"w": "<&>!", "s": 60.1, "e": 60.2},
+                             {"w": "Bye", "s": 60.3, "e": 61}])
+    result = builder(words, duration=60.55)
+    assert result.count(" --> ") == 2
+    assert f"00:01:00{sep}000 --> 00:01:00{sep}300\ncafé &lt;&amp;&gt;!" in result
+    assert f"00:01:00{sep}300 --> 00:01:00{sep}550\nBye" in result
+    if builder is build_srt:
+        assert result.startswith("1\n") and "\n\n2\n" in result
+    else:
+        assert result.startswith("WEBVTT\n\n")
+
+
+def test_plain_empty():
+    assert build_srt([]) == ""
+    assert build_vtt([]) == "WEBVTT\n\n"
+
+
+@pytest.mark.parametrize("fmt,builder", [("srt", build_srt), ("vtt", build_vtt)])
+def test_plain_cli(fmt, builder, tmp_path):
+    transcript = tmp_path / "words.json"
+    transcript.write_text(json.dumps(WORDS))
+    out = tmp_path / f"captions.{fmt}"
+    assert main([str(transcript), "--format", fmt, "-o", str(out)]) == 0
+    assert out.read_text(encoding="utf-8") == builder(WORDS)

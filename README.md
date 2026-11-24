@@ -47,6 +47,14 @@ wordpop transcript.json -o captions.ass --style pop --title "wait for it"
 wordpop transcript.json --video in.mp4 --out out.mp4 --style neon --start 44.7 --end 75.2
 ```
 
+Use plain captions for a player or editing timeline. Each group becomes one cue.
+The default is ASS. Burning a video still uses ASS styling, and you can add a plain file with `-o`.
+
+```sh
+wordpop examples/transcript.json --format srt -o captions.srt
+wordpop examples/transcript.json --format vtt -o captions.vtt
+```
+
 ## Styles
 
 | name      | look                                                    | font            |
